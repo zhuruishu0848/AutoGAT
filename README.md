@@ -28,8 +28,6 @@ Build text graph from the datasets in data/corpus/ as:
 python build_graph.py [DATASET] [WINSIZE]
 ```
 Provided datasets include `mr`,`ohsumed`,`R8`and`R52`. The default sliding window size is 3.
-To use your own dataset, put the text file under `data/corpus/` and the label file under `data/` as other datasets do. Preprocess the text by running `remove_words.py` before building the graphs.
-Start training and inference as:
 ```python
 python train.py [--dataset DATASET] [--name value]
 ```
