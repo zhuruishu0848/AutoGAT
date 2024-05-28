@@ -5,51 +5,35 @@ from inits import glorot,xavier
 
 class GAT_unit(nn.Module):
     """
-    Simple GAT layer, similar to https://arxiv.org/abs/1710.10903
+    copy from https://github.com/Diego999/pyGAT
     """
     def __init__(self, in_features, out_features, dropout, alpha, concat=True):
 
         super(GAT_unit, self).__init__()
 
-        self.in_features = in_features #节点特征维度
-        self.out_features = out_features #gat聚合后的特征维度
+        self.in_features = in_features
+        self.out_features = out_features
         self.dropout = dropout
-        self.alpha = alpha #lsakyReLU参数
+        self.alpha = alpha
         self.concat = concat
 
-        #Parameter类型的可训练参数，可反向传播，可求导
         self.W = nn.Parameter(torch.empty(size=(in_features, out_features)))
         nn.init.xavier_uniform_(self.W.data, gain=1.414)
         self.a = nn.Parameter(torch.empty(size=(2*out_features, 1)))
         nn.init.xavier_uniform_(self.a.data, gain=1.414)
 
-        #激活函数
         self.leakyrelu = nn.LeakyReLU(self.alpha)
 
     def forward(self, input_h, adj):
-        """
+        Wh = torch.matmul(input_h, self.W)
+        e = self._prepare_attentional_mechanism_input(Wh)
 
-        Args:
-            input_h: [N,in_features] N个点的特征向量
-            adj:邻接矩阵
-
-            W:[in_features,out_features] 可学习的升维矩阵
-
-        Returns:
-
-        """
-
-        # Wh = torch.mm(input_h, self.W)
-        Wh = torch.matmul(input_h, self.W)# h.shape: (N, in_features), Wh.shape: (N, out_features)
-        e = self._prepare_attentional_mechanism_input(Wh)#映射到实数上 [N,N]所有节点间的注意力系数
-        # 对非邻居结点进行掩码，不相邻的结点的注意力系数替换成-inf(后续会对e做softmax，softmax(-inf)=0)
         onemask_vec = -9e15*torch.ones_like(e)
-
-        e = torch.where(adj > 0, e, onemask_vec)#adj>0处取e，否则取onemask_vec,即-inf
-        attention = F.softmax(e, dim=1)#加了掩码，归一化后，变为注意力权重矩阵[N,N] 取值在[0~1]
+        e = torch.where(adj > 0, e, onemask_vec)
+        attention = F.softmax(e, dim=1)
 
         attention = F.dropout(attention, self.dropout, training=self.training)
-        h_prime = torch.matmul(attention, Wh)#聚合
+        h_prime = torch.matmul(attention, Wh)
 
         if self.concat:
             return F.elu(h_prime)
@@ -57,14 +41,8 @@ class GAT_unit(nn.Module):
             return h_prime
 
     def _prepare_attentional_mechanism_input(self, Wh):
-        # Wh.shape (N, out_feature)
-        # self.a.shape (2 * out_feature, 1)
-        # Wh1&2.shape (N, 1)
-        # e.shape (N, N)
         Wh1 = torch.matmul(Wh, self.a[:self.out_features, :])
         Wh2 = torch.matmul(Wh, self.a[self.out_features:, :])
-        # broadcast add
-        # e = Wh1 + Wh2.T
         temp = torch.transpose(Wh2, 1, -1)
         e = Wh1 + temp
         return self.leakyrelu(e)
@@ -74,8 +52,6 @@ class GAT_unit(nn.Module):
 
 
 class SpecialSpmmFunction(torch.autograd.Function):
-    """Special function for only sparse region backpropataion layer."""
-
     @staticmethod
     def forward(ctx, indices, values, shape, b):
         assert indices.requires_grad == False
@@ -104,9 +80,8 @@ class SpecialSpmm(nn.Module):
 
 class SpGAT_unit(nn.Module):
     """
-    Sparse version GAT layer, similar to https://arxiv.org/abs/1710.10903
+    copy from https://github.com/Diego999/pyGAT
     """
-
     def __init__(self, in_features, out_features, dropout, alpha, concat=True):
         super(SpGAT_unit, self).__init__()
         self.in_features = in_features
@@ -133,49 +108,32 @@ class SpGAT_unit(nn.Module):
         edge = adj.nonzero().t()
 
         h = torch.mm(input, self.W)
-        # h = torch.matmul(input, self.W)
-        # h: N x out
         assert not torch.isnan(h).any()
 
-        # Self-attention on the nodes - Shared attention mechanism
         edge_h = torch.cat((h[edge[0, :], :], h[edge[1, :], :]), dim=1).t()
-        # edge: 2*D x E
-
         edge_e = torch.exp(-self.leakyrelu(self.a.mm(edge_h).squeeze()))
-        # edge_e = torch.exp(-self.elu(self.a.mm(edge_h).squeeze()))
         assert not torch.isnan(edge_e).any()
-        # edge_e: E
 
         e_rowsum = self.special_spmm(edge, edge_e, torch.Size([N, N]), torch.ones(size=(N, 1), device=dv))
         e_rowsum = e_rowsum + torch.full((N, 1), 1e-25).cuda()
-        # e_rowsum: N x 1
 
         edge_e = self.dropout(edge_e)
-        # edge_e: E
 
         h_prime = self.special_spmm(edge, edge_e, torch.Size([N, N]), h)
         assert not torch.isnan(h_prime).any()
-        # h_prime: N x out
 
         h_prime = h_prime.div(e_rowsum)
-        # h_prime: N x out
         assert not torch.isnan(h_prime).any()
 
         if self.concat:
-            # if this layer is not last layer,
             return F.elu(h_prime)
         else:
-            # if this layer is last layer,
             return h_prime
 
     def __repr__(self):
         return self.__class__.__name__ + ' (' + str(self.in_features) + ' -> ' + str(self.out_features) + ')'
 
 class GSL_unit(nn.Module):
-    """
-    Sparse version GAT layer, similar to https://arxiv.org/abs/1710.10903
-    """
-
     def __init__(self, in_features, out_features, dropout, alpha):
         super(GSL_unit, self).__init__()
         self.in_features = in_features
@@ -198,35 +156,29 @@ class GSL_unit(nn.Module):
         dv = 'cuda' if input.is_cuda else 'cpu'
 
         N = input.size()[0]
-        edge = adj.nonzero().t()
+
+        adj2 = torch.matmul(adj, adj.transpose(1, -1))
+        adj2 = F.normalize(adj2, dim=1)
+
+        edge = adj2.nonzero().t()
 
         h = torch.mm(input, self.W)
-        # h = torch.matmul(input, self.W)
         # h: N x out
         assert not torch.isnan(h).any()
 
-        # Self-attention on the nodes - Shared attention mechanism
         edge_h = torch.cat((h[edge[0, :], :], h[edge[1, :], :]), dim=1).t()
-        # edge: 2*D x E
-
-        # edge_e = torch.exp(-self.leakyrelu(self.a.mm(edge_h).squeeze()))
         edge_e = torch.exp(-self.elu(self.a.mm(edge_h).squeeze()))
         assert not torch.isnan(edge_e).any()
-        # edge_e: E
 
         e_rowsum = self.special_spmm(edge, edge_e, torch.Size([N, N]), torch.ones(size=(N, 1), device=dv))
-        e_rowsum = e_rowsum + torch.full((N, 1), 1e-25, device=dv)#.cuda()
-        # e_rowsum: N x 1
+        e_rowsum = e_rowsum + torch.full((N, 1), 1e-25, device=dv)
 
         edge_e = self.dropout(edge_e)
-        # edge_e: E
 
         h_prime = self.special_spmm(edge, edge_e, torch.Size([N, N]), b=torch.eye(N, device=dv))
         assert not torch.isnan(h_prime).any()
-        # h_prime: N x out
 
         pij = h_prime.div(e_rowsum)
-        # pij: N x N
         assert not torch.isnan(pij).any()
 
         return pij
@@ -235,13 +187,16 @@ class GSL_unit(nn.Module):
         return self.__class__.__name__ + ' (' + str(self.in_features) + ' -> ' + str(self.out_features) + ')'
 
 class gru_unit(nn.Module):
+    """
+        copy from https://arxiv.org/abs/2004.13826
+    """
     def __init__(self, output_dim, act, dropout_p):
         super(gru_unit,self).__init__()
         self.output_dim = output_dim
         self.dropout_p = dropout_p
         self.dropout = nn.Dropout(1-self.dropout_p)
         self.act = act
-        self.z0_weight = glorot([self.output_dim, self.output_dim]) # nn.Parameter(torch.randn(self.output_dim, self.output_dim))
+        self.z0_weight = glorot([self.output_dim, self.output_dim])
         self.z1_weight = glorot([self.output_dim, self.output_dim])
         self.r0_weight = glorot([self.output_dim, self.output_dim])
         self.r1_weight = glorot([self.output_dim, self.output_dim])
@@ -313,7 +268,6 @@ class SpGATLayer(nn.Module):
                                   alpha=alpha,
                                   concat=False)
 
-    # def forward(self, x, adj):
     def forward(self, x, adj, mask):
         x_list = torch.unbind(x, 0)
         adj_list = torch.unbind(adj, 0)
@@ -337,7 +291,6 @@ class SpGATLayer(nn.Module):
 
 class GSLLayer(nn.Module):
     def __init__(self, nfeat, nhid, nclass, dropout, alpha, nheads):
-        """Sparse version of GAT."""
         super(GSLLayer, self).__init__()
         self.dropout = dropout
 
@@ -347,7 +300,6 @@ class GSLLayer(nn.Module):
                                 alpha=alpha)
 
     def forward(self, x, adj):
-    # def forward(self, x, adj, mask):
         x_list = torch.unbind(x, 0)
         adj_list = torch.unbind(adj, 0)
         adj_out_list = []
