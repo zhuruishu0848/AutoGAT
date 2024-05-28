@@ -41,4 +41,4 @@ python train.py --dataset R8
 
 ## Acknowledgement
 
-The data preprocess and graph construction are from [TextGCN](https://github.com/yao8839836/text_gcn)
+The data preprocess and graph construction are from [TextGCN](https://github.com/yao8839836/text_gcn)and [TextING](https://github.com/CRIPAC-DIG/TextING)
