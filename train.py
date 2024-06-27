@@ -119,10 +119,12 @@ for epoch in range(args.epochs):
     train_loss /= len(train_y)
     train_acc /= len(train_y)
     # Validation
-    val_cost, val_acc, val_duration, _, _, _ = evaluate(model, val_feature, val_adj, val_mask, val_y)
-    cost_val.append(val_cost.item())
+    with torch.no_grad():
+        val_cost, val_acc, val_duration, _, _, _ = evaluate(model, val_feature, val_adj, val_mask, val_y)
+        cost_val.append(val_cost.item())
     # Test
-    test_cost, test_acc, test_duration, embeddings, pred, labels = evaluate(model, test_feature, test_adj, test_mask, test_y)
+    with torch.no_grad():
+        test_cost, test_acc, test_duration, embeddings, pred, labels = evaluate(model, test_feature, test_adj, test_mask, test_y)
 
     if val_acc >= best_val:
         best_val = val_acc
